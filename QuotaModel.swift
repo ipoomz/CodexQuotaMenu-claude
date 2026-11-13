@@ -20,12 +20,59 @@ func quotaWindowKind(durationMinutes: Int?) -> QuotaWindowKind? {
     }
 }
 
+func codexMenuBarTitle(fiveHourRemainingPercent: Int?, weeklyRemainingPercent: Int?) -> String {
+    if let fiveHourRemainingPercent, let weeklyRemainingPercent {
+        return "\u{00A0}5h\(fiveHourRemainingPercent)%\u{00A0}W\(weeklyRemainingPercent)%"
+    }
+    if let fiveHourRemainingPercent {
+        return "\u{00A0}5h\(fiveHourRemainingPercent)%"
+    }
+    if let weeklyRemainingPercent {
+        return "\u{00A0}W\(weeklyRemainingPercent)%"
+    }
+    return " --"
+}
+
+func singleLineMenuBarTitle(_ title: String) -> String {
+    String(title.map { $0.isNewline ? " " : $0 })
+}
+
 struct BankedResetCredit: Equatable {
     let id: String
     let title: String?
     let resetType: String?
     let status: String
     let expiresAt: Date?
+}
+
+func bankedResetDisplayTitle(_ credit: BankedResetCredit) -> String {
+    if let title = credit.title?.trimmingCharacters(in: .whitespacesAndNewlines),
+       !title.isEmpty,
+       !title.unicodeScalars.contains(where: isCJKUnifiedIdeograph) {
+        return title
+    }
+
+    if let resetType = credit.resetType?.trimmingCharacters(in: .whitespacesAndNewlines),
+       !resetType.isEmpty {
+        if resetType.caseInsensitiveCompare("full") == .orderedSame {
+            return "Full reset"
+        }
+        return resetType.replacingOccurrences(of: "_", with: " ").capitalized
+    }
+
+    return "Full reset"
+}
+
+private func isCJKUnifiedIdeograph(_ scalar: Unicode.Scalar) -> Bool {
+    switch scalar.value {
+    case 0x3400...0x4DBF,
+         0x4E00...0x9FFF,
+         0xF900...0xFAFF,
+         0x20000...0x2FA1F:
+        return true
+    default:
+        return false
+    }
 }
 
 struct BankedResetSummary: Equatable {
@@ -50,7 +97,7 @@ enum BankedResetParseError: LocalizedError {
     case invalidResponse
 
     var errorDescription: String? {
-        "Codex 返回了无法识别的 banked reset 数据"
+        "Codex returned unrecognized banked reset data"
     }
 }
 
@@ -85,7 +132,7 @@ func parseBankedResetResponse(_ data: Data) throws -> BankedResetSummary {
 
 func formatBankedResetExpiry(_ date: Date, timeZone: TimeZone = .current) -> String {
     let formatter = DateFormatter()
-    formatter.locale = Locale(identifier: "zh_CN")
+    formatter.locale = Locale(identifier: "en_US")
     formatter.timeZone = timeZone
     formatter.dateFormat = "yyyy-MM-dd EEE HH:mm:ss"
     return formatter.string(from: date)

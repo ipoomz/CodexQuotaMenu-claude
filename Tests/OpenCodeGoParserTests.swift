@@ -153,7 +153,7 @@ enum OpenCodeGoParserTests {
 
     private static func testErrorDescriptionDoesNotLeakCookie() {
         let cookie = "auth=SUPER_SECRET_VALUE"
-        let message = "OpenCode Go 接口错误：HTTP 500: \(cookie)"
+        let message = "OpenCode Go API error: HTTP 500: \(cookie)"
         let error = OpenCodeGoUsageError.apiError(message)
         let description = error.errorDescription ?? ""
         precondition(!description.contains("SUPER_SECRET_VALUE"))

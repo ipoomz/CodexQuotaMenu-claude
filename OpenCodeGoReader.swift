@@ -150,7 +150,7 @@ final class OpenCodeGoReader {
                         if let first = fallbackIDs.first {
                             completion(.success(first))
                         } else {
-                            completion(.failure(OpenCodeGoUsageError.parseFailed("找不到 workspace")))
+                            completion(.failure(OpenCodeGoUsageError.parseFailed("Workspace not found")))
                         }
                     case .failure(let error):
                         completion(.failure(error))
@@ -168,7 +168,7 @@ final class OpenCodeGoReader {
         completion: @escaping (Result<OpenCodeGoSnapshot, Error>) -> Void
     ) {
         guard let url = URL(string: "https://opencode.ai/workspace/\(workspaceID)/go") else {
-            completion(.failure(OpenCodeGoUsageError.parseFailed("workspace URL 无效")))
+            completion(.failure(OpenCodeGoUsageError.parseFailed("Invalid workspace URL")))
             return
         }
         var request = URLRequest(url: url)
@@ -210,7 +210,7 @@ final class OpenCodeGoReader {
                 return
             }
             guard let httpResponse = response as? HTTPURLResponse else {
-                completion(.failure(OpenCodeGoUsageError.networkError("无 HTTP 响应")))
+                completion(.failure(OpenCodeGoUsageError.networkError("No HTTP response")))
                 return
             }
             let bodyText = data.flatMap { String(data: $0, encoding: .utf8) } ?? ""

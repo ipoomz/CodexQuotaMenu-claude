@@ -31,6 +31,8 @@ swiftc \
     "$ROOT_DIR/OpenCodeGoModel.swift" \
     "$ROOT_DIR/OpenCodeGoCookieStore.swift" \
     "$ROOT_DIR/OpenCodeGoReader.swift" \
+    "$ROOT_DIR/ClaudeUsageModel.swift" \
+    "$ROOT_DIR/ClaudeUsageReader.swift" \
     "$ROOT_DIR/CodexQuotaMenu.swift" \
     "$ROOT_DIR/main.swift" \
     -o "$CONTENTS_DIR/MacOS/CodexQuotaMenu"

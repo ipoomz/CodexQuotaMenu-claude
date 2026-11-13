@@ -8,6 +8,14 @@ enum WindowMappingTests {
         precondition(quotaWindowKind(durationMinutes: 0) == nil)
         precondition(quotaWindowKind(durationMinutes: nil) == nil)
 
+        let menuBarTitle = codexMenuBarTitle(
+            fiveHourRemainingPercent: 63,
+            weeklyRemainingPercent: 94
+        )
+        precondition(menuBarTitle == "\u{00A0}5h63%\u{00A0}W94%")
+        precondition(!menuBarTitle.contains(where: \.isNewline))
+        precondition(singleLineMenuBarTitle("5h63%\nW94%") == "5h63% W94%")
+
         let weeklyOnly = snapshot(fiveHourUsed: nil, weeklyUsed: 0)
         precondition(weeklyOnly.fiveHourRemainingPercent == nil)
         precondition(weeklyOnly.weeklyRemainingPercent == 100)
@@ -56,14 +64,24 @@ enum WindowMappingTests {
         precondition(banked.availableCount == 3)
         precondition(banked.availableCredits.map(\.id) == ["earlier", "middle", "later"])
 
+        let localizedCredit = BankedResetCredit(
+            id: "localized",
+            title: "完整重置",
+            resetType: "full",
+            status: "available",
+            expiresAt: nil
+        )
+        precondition(bankedResetDisplayTitle(localizedCredit) == "Full reset")
+
         let utc = TimeZone(secondsFromGMT: 0)!
         let earliestExpiry = banked.availableCredits[0].expiresAt!
         precondition(
             formatBankedResetExpiry(earliestExpiry, timeZone: utc) ==
-            "2026-07-27 周一 00:00:00"
+            "2026-07-27 Mon 00:00:00"
         )
 
         OpenCodeGoParserTests.run()
+        ClaudeUsageParserTests.run()
 
         print("Window mapping tests passed")
     }

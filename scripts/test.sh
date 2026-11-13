@@ -14,8 +14,10 @@ swiftc \
     -framework Security \
     "$ROOT_DIR/QuotaModel.swift" \
     "$ROOT_DIR/OpenCodeGoModel.swift" \
+    "$ROOT_DIR/ClaudeUsageModel.swift" \
     "$ROOT_DIR/Tests/WindowMappingTests.swift" \
     "$ROOT_DIR/Tests/OpenCodeGoParserTests.swift" \
+    "$ROOT_DIR/Tests/ClaudeUsageParserTests.swift" \
     -o "$TMP_DIR/WindowMappingTests"
 
 "$TMP_DIR/WindowMappingTests"

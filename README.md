@@ -29,7 +29,7 @@ It was built after a Codex desktop update changed how usage information was expo
 
 - Shows remaining quota for the 5-hour and weekly windows in the menu bar.
 - Opens a native graphical panel with color-coded progress meters.
-- Refreshes from the Codex usage service every 30 seconds.
+- Refreshes from the Codex usage service every 2 minutes.
 - Shows the available banked reset count and each reset's exact local expiry time.
 - Shows both remaining and used percentages.
 - Clearly labels whether data came from the official API or the local fallback.

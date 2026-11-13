@@ -1,5 +1,10 @@
 # Changelog
 
+## Unreleased
+
+- Add Claude usage tracking: 5-hour and weekly remaining quota from Claude Code's OAuth session (read from the macOS Keychain in memory only).
+- Add a Claude panel section, an "Open Claude" menu item, and a Claude option in the menu bar display selector.
+
 ## 2.4.0 - 2026-07-26
 
 - Read banked reset credits from Codex's dedicated reset-credit endpoint.
@@ -33,7 +38,7 @@
 ## 2.0.0 - 2026-07-10
 
 - Read live quota data from the current Codex usage endpoint.
-- Refresh automatically every 30 seconds.
+- Refresh automatically every 2 minutes.
 - Fall back to recent local Codex response headers when necessary.
 - Show the active data source and sync timestamp in the menu.
 - Support the current Codex desktop application bundle path.

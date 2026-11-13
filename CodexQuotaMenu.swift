@@ -28,27 +28,34 @@ final class QuotaPanelView: NSView {
     private let snapshot: UsageSnapshot
     private let bankedCredits: [BankedResetCredit]
     private let openCodeGoAccounts: [(label: String, snapshot: OpenCodeGoSnapshot?)]
+    private let claude: ClaudeSnapshot?
     private let panelSize: NSSize
     private let syncTimeFormatter: DateFormatter = {
         let formatter = DateFormatter()
-        formatter.locale = Locale(identifier: "zh_CN")
+        formatter.locale = Locale(identifier: "en_US")
         formatter.dateFormat = "HH:mm:ss"
         return formatter
     }()
 
-    init(snapshot: UsageSnapshot, openCodeGoAccounts: [(label: String, snapshot: OpenCodeGoSnapshot?)]) {
+    init(
+        snapshot: UsageSnapshot,
+        claude: ClaudeSnapshot?,
+        openCodeGoAccounts: [(label: String, snapshot: OpenCodeGoSnapshot?)]
+    ) {
         self.snapshot = snapshot
+        self.claude = claude
         self.openCodeGoAccounts = openCodeGoAccounts
         bankedCredits = snapshot.bankedResetSummary?.availableCredits ?? []
         let rowCount = max(1, bankedCredits.count)
         let codexBottom = Self.bankedRowsTop + CGFloat(rowCount) * Self.bankedRowHeight + 8
-        let openCodeTop = codexBottom + 12
+        let claudeTop = codexBottom + 12
+        let openCodeTop = claudeTop + Self.claudeSectionHeight(claude) + 12
         let sourceTop = openCodeTop + Self.openCodeSectionHeight(accounts: openCodeGoAccounts) + 8
         panelSize = NSSize(width: Self.panelWidth, height: sourceTop + 17)
         super.init(frame: NSRect(origin: .zero, size: panelSize))
         setAccessibilityElement(true)
         setAccessibilityRole(.group)
-        setAccessibilityLabel("Codex 与 OpenCode Go 剩余额度")
+        setAccessibilityLabel("Remaining Codex, Claude and OpenCode Go quota")
     }
 
     @available(*, unavailable)
@@ -88,13 +95,13 @@ final class QuotaPanelView: NSView {
         NSRect(x: 16, y: 43, width: 318, height: 1).fill()
 
         drawMetric(
-            title: "5 小时额度",
+            title: "5-hour quota",
             remainingPercent: snapshot.fiveHourRemainingPercent,
             resetAt: snapshot.fiveHourResetAt,
             top: 57
         )
         drawMetric(
-            title: "一周额度",
+            title: "Weekly quota",
             remainingPercent: snapshot.weeklyRemainingPercent,
             resetAt: snapshot.weeklyResetAt,
             top: 126
@@ -104,14 +111,19 @@ final class QuotaPanelView: NSView {
 
         let rowCount = max(1, bankedCredits.count)
         let codexBottom = Self.bankedRowsTop + CGFloat(rowCount) * Self.bankedRowHeight + 8
-        let openCodeTop = codexBottom + 12
+        let claudeTop = codexBottom + 12
+        drawClaude(at: claudeTop)
+        let openCodeTop = claudeTop + Self.claudeSectionHeight(claude) + 12
         drawOpenCodeGo(at: openCodeTop)
 
         let sourceTop = openCodeTop + Self.openCodeSectionHeight(accounts: openCodeGoAccounts) + 8
-        var source = "\(syncTimeFormatter.string(from: snapshot.sourceDate)) 同步 · \(snapshot.sourceName)"
+        var source = "Synced \(syncTimeFormatter.string(from: snapshot.sourceDate)) · \(snapshot.sourceName)"
+        if let claude, claude.hasAnyData {
+            source += " · Claude synced \(syncTimeFormatter.string(from: claude.lastUpdated))"
+        }
         for account in openCodeGoAccounts {
             if let accountSnapshot = account.snapshot {
-                source += " · \(account.label) \(syncTimeFormatter.string(from: accountSnapshot.lastUpdated)) 同步"
+                source += " · \(account.label) synced \(syncTimeFormatter.string(from: accountSnapshot.lastUpdated))"
             }
         }
         drawText(
@@ -120,6 +132,85 @@ final class QuotaPanelView: NSView {
             font: .systemFont(ofSize: 10),
             color: .tertiaryLabelColor
         )
+    }
+
+    private static func claudeSectionHeight(_ snapshot: ClaudeSnapshot?) -> CGFloat {
+        guard let snapshot, snapshot.hasAnyData else {
+            return 30 + 24 + (snapshot?.errorMessage != nil ? 18 : 0)
+        }
+        var height: CGFloat = 30 + 2 * metricHeight
+        if snapshot.errorMessage != nil {
+            height += 18
+        }
+        if snapshot.isStale {
+            height += 16
+        }
+        return height
+    }
+
+    private func drawClaude(at top: CGFloat) {
+        NSColor.separatorColor.withAlphaComponent(0.55).setFill()
+        NSRect(x: 16, y: top, width: 318, height: 1).fill()
+
+        drawText(
+            "Claude",
+            in: NSRect(x: 16, y: top + 7, width: 180, height: 22),
+            font: .systemFont(ofSize: 15, weight: .semibold),
+            color: .labelColor
+        )
+        if let planType = claude?.planType {
+            drawText(
+                planType.capitalized,
+                in: NSRect(x: 220, y: top + 10, width: 114, height: 20),
+                font: .systemFont(ofSize: 11, weight: .medium),
+                color: .secondaryLabelColor,
+                alignment: .right
+            )
+        }
+
+        let metricTop = top + 40
+        guard let claude, claude.hasAnyData else {
+            drawText(
+                claude?.errorMessage ?? "Claude has not synced yet",
+                in: NSRect(x: 16, y: metricTop - 6, width: 318, height: 16),
+                font: .systemFont(ofSize: 10.5),
+                color: claude?.errorMessage == nil ? .secondaryLabelColor : .systemRed
+            )
+            return
+        }
+
+        drawMetric(
+            title: "5-hour quota",
+            remainingPercent: claude.fiveHour?.remainingPercentInt,
+            resetAt: claude.fiveHour?.resetAt,
+            top: metricTop
+        )
+        drawMetric(
+            title: "Weekly quota",
+            remainingPercent: claude.weekly?.remainingPercentInt,
+            resetAt: claude.weekly?.resetAt,
+            top: metricTop + Self.metricHeight
+        )
+
+        var warningTop = metricTop + Self.metricHeight * 2 + 2
+        if let errorMessage = claude.errorMessage {
+            drawText(
+                errorMessage,
+                in: NSRect(x: 16, y: warningTop, width: 318, height: 16),
+                font: .systemFont(ofSize: 10.5),
+                color: .systemRed
+            )
+            warningTop += 18
+        }
+        if claude.isStale {
+            let minutes = max(1, Int(Date().timeIntervalSince(claude.lastUpdated) / 60))
+            drawText(
+                "Synced \(minutes) min ago · Unable to refresh",
+                in: NSRect(x: 16, y: warningTop, width: 318, height: 15),
+                font: .systemFont(ofSize: 10.5),
+                color: .secondaryLabelColor
+            )
+        }
     }
 
     private static func openCodeSectionHeight(accounts: [(label: String, snapshot: OpenCodeGoSnapshot?)]) -> CGFloat {
@@ -168,13 +259,13 @@ final class QuotaPanelView: NSView {
             let badgeText: String
             let badgeColor: NSColor
             if snapshot.errorMessage != nil {
-                badgeText = "不可用"
+                badgeText = "Unavailable"
                 badgeColor = .systemRed
             } else if snapshot.isStale {
-                badgeText = "同步延迟"
+                badgeText = "Delayed"
                 badgeColor = .systemOrange
             } else {
-                badgeText = "实时"
+                badgeText = "Live"
                 badgeColor = .systemGreen
             }
             drawText(
@@ -189,7 +280,7 @@ final class QuotaPanelView: NSView {
         let metricTop = top + 40
         guard let snapshot = account.snapshot else {
             drawText(
-                "尚未同步 \(account.label)",
+                "\(account.label) has not synced yet",
                 in: NSRect(x: 16, y: metricTop, width: 318, height: 18),
                 font: .systemFont(ofSize: 11),
                 color: .secondaryLabelColor
@@ -198,19 +289,19 @@ final class QuotaPanelView: NSView {
         }
 
         drawMetric(
-            title: "5 小时额度",
+            title: "5-hour quota",
             remainingPercent: snapshot.rolling5h?.remainingPercentInt,
             resetAt: snapshot.rolling5h?.resetAt,
             top: metricTop
         )
         drawMetric(
-            title: "一周额度",
+            title: "Weekly quota",
             remainingPercent: snapshot.weekly?.remainingPercentInt,
             resetAt: snapshot.weekly?.resetAt,
             top: metricTop + Self.metricHeight
         )
         drawMetric(
-            title: "每月额度",
+            title: "Monthly quota",
             remainingPercent: snapshot.monthly?.remainingPercentInt,
             resetAt: snapshot.monthly?.resetAt,
             top: metricTop + Self.metricHeight * 2
@@ -229,7 +320,7 @@ final class QuotaPanelView: NSView {
         if snapshot.isStale {
             let minutes = max(1, Int(Date().timeIntervalSince(snapshot.lastUpdated) / 60))
             drawText(
-                "\(minutes) 分钟前同步 · 暂时无法刷新",
+                "Synced \(minutes) min ago · Unable to refresh",
                 in: NSRect(x: 16, y: warningTop, width: 318, height: 15),
                 font: .systemFont(ofSize: 10.5),
                 color: .secondaryLabelColor
@@ -259,7 +350,7 @@ final class QuotaPanelView: NSView {
             }
         }
 
-        let percentText = remainingPercent.map { "\($0)% 剩余" } ?? "--% 剩余"
+        let percentText = remainingPercent.map { "\($0)% remaining" } ?? "--% remaining"
         drawText(
             percentText,
             in: NSRect(x: 16, y: top + 40, width: 120, height: 18),
@@ -280,7 +371,7 @@ final class QuotaPanelView: NSView {
         NSRect(x: 16, y: 195, width: 318, height: 1).fill()
 
         drawText(
-            "使用限额重置",
+            "Usage limit resets",
             in: NSRect(x: 16, y: 205, width: 180, height: 22),
             font: .systemFont(ofSize: 13, weight: .semibold),
             color: .labelColor
@@ -291,7 +382,7 @@ final class QuotaPanelView: NSView {
             NSColor.systemGreen.withAlphaComponent(0.14).setFill()
             NSBezierPath(roundedRect: badgeRect, xRadius: 12.5, yRadius: 12.5).fill()
             drawText(
-                "可用 \(summary.availableCount) 次",
+                "\(summary.availableCount) available",
                 in: NSRect(x: 250, y: 206, width: 84, height: 18),
                 font: .monospacedDigitSystemFont(ofSize: 11, weight: .semibold),
                 color: .systemGreen,
@@ -299,7 +390,7 @@ final class QuotaPanelView: NSView {
             )
         } else {
             drawText(
-                "暂不可用",
+                "Unavailable",
                 in: NSRect(x: 250, y: 206, width: 84, height: 18),
                 font: .systemFont(ofSize: 11, weight: .medium),
                 color: .secondaryLabelColor,
@@ -308,7 +399,7 @@ final class QuotaPanelView: NSView {
         }
 
         guard !bankedCredits.isEmpty else {
-            let message = snapshot.bankedResetSummary == nil ? "暂时无法获取 banked reset" : "暂无可用的重置次数"
+            let message = snapshot.bankedResetSummary == nil ? "Banked resets are temporarily unavailable" : "No resets available"
             drawText(
                 message,
                 in: NSRect(x: 16, y: Self.bankedRowsTop + 4, width: 318, height: 18),
@@ -342,21 +433,14 @@ final class QuotaPanelView: NSView {
     }
 
     private func bankedResetTitle(_ credit: BankedResetCredit) -> String {
-        if let title = credit.title?.trimmingCharacters(in: .whitespacesAndNewlines),
-           !title.isEmpty {
-            return title
-        }
-        if let resetType = credit.resetType, !resetType.isEmpty {
-            return resetType.replacingOccurrences(of: "_", with: " ").capitalized
-        }
-        return "Full reset"
+        bankedResetDisplayTitle(credit)
     }
 
     private func bankedResetExpiry(_ credit: BankedResetCredit) -> String {
         guard let expiresAt = credit.expiresAt else {
-            return "到期时间未知"
+            return "Expiration unknown"
         }
-        return "\(formatBankedResetExpiry(expiresAt)) 到期"
+        return "Expires \(formatBankedResetExpiry(expiresAt))"
     }
 
     private func meterColor(for remainingPercent: Int) -> NSColor {
@@ -372,7 +456,7 @@ final class QuotaPanelView: NSView {
 
     private func formatCountdown(_ date: Date?) -> String {
         guard let date else {
-            return "重置时间未知"
+            return "Reset time unknown"
         }
 
         let totalMinutes = max(0, Int(date.timeIntervalSinceNow) / 60)
@@ -381,15 +465,15 @@ final class QuotaPanelView: NSView {
         let minutes = totalMinutes % 60
 
         if days > 0 {
-            return "\(days)天 \(hours)小时后重置"
+            return "Resets in \(days)d \(hours)h"
         }
         if hours > 0 {
-            return "\(hours)小时 \(minutes)分后重置"
+            return "Resets in \(hours)h \(minutes)m"
         }
         if minutes > 0 {
-            return "\(minutes)分后重置"
+            return "Resets in \(minutes)m"
         }
-        return "即将重置"
+        return "Resetting soon"
     }
 
     private func drawText(
@@ -466,20 +550,20 @@ final class CodexQuotaReader {
             }
 
             group.notify(queue: stateQueue) {
-                var snapshot = state.usageSnapshot ?? .empty(error: "Codex 用量读取未完成")
+                var snapshot = state.usageSnapshot ?? .empty(error: "Codex usage could not be loaded")
                 switch state.bankedResetResult {
                 case .success(let summary):
                     snapshot.bankedResetSummary = summary
                 case .failure(let error):
-                    snapshot.bankedResetErrorMessage = "Banked reset 读取失败：\(error.localizedDescription)"
+                    snapshot.bankedResetErrorMessage = "Failed to load banked resets: \(error.localizedDescription)"
                 case nil:
-                    snapshot.bankedResetErrorMessage = "Banked reset 读取未完成"
+                    snapshot.bankedResetErrorMessage = "Banked resets could not be loaded"
                 }
                 completion(snapshot)
             }
         } catch {
             var snapshot = readLogFallback(apiError: error)
-            snapshot.bankedResetErrorMessage = "Banked reset 读取失败：\(error.localizedDescription)"
+            snapshot.bankedResetErrorMessage = "Failed to load banked resets: \(error.localizedDescription)"
             completion(snapshot)
         }
     }
@@ -502,7 +586,7 @@ final class CodexQuotaReader {
                     data: data,
                     response: response,
                     error: error,
-                    endpointName: "Codex 用量接口"
+                    endpointName: "Codex usage API"
                 )
                 completion(try self.parseAPIResponse(data))
             } catch {
@@ -530,7 +614,7 @@ final class CodexQuotaReader {
                     data: data,
                     response: response,
                     error: error,
-                    endpointName: "Banked reset 接口"
+                    endpointName: "Banked reset API"
                 )
                 completion(.success(try parseBankedResetResponse(data)))
             } catch {
@@ -564,7 +648,7 @@ final class CodexQuotaReader {
             throw NSError(
                 domain: "CodexQuotaMenu.API",
                 code: status,
-                userInfo: [NSLocalizedDescriptionKey: "\(endpointName)返回 HTTP \(status)"]
+                userInfo: [NSLocalizedDescriptionKey: "\(endpointName) returned HTTP \(status)"]
             )
         }
 
@@ -572,7 +656,7 @@ final class CodexQuotaReader {
             throw NSError(
                 domain: "CodexQuotaMenu.API",
                 code: -1,
-                userInfo: [NSLocalizedDescriptionKey: "\(endpointName)没有返回数据"]
+                userInfo: [NSLocalizedDescriptionKey: "\(endpointName) returned no data"]
             )
         }
         return data
@@ -589,7 +673,7 @@ final class CodexQuotaReader {
             throw NSError(
                 domain: "CodexQuotaMenu.Auth",
                 code: 1,
-                userInfo: [NSLocalizedDescriptionKey: "找不到 Codex 登录信息"]
+                userInfo: [NSLocalizedDescriptionKey: "Codex sign-in information was not found"]
             )
         }
         return (accessToken, accountID)
@@ -601,7 +685,7 @@ final class CodexQuotaReader {
             throw NSError(
                 domain: "CodexQuotaMenu.API",
                 code: 2,
-                userInfo: [NSLocalizedDescriptionKey: "Codex 用量格式无法解析"]
+                userInfo: [NSLocalizedDescriptionKey: "Codex usage data could not be parsed"]
             )
         }
 
@@ -616,13 +700,13 @@ final class CodexQuotaReader {
             throw NSError(
                 domain: "CodexQuotaMenu.API",
                 code: 3,
-                userInfo: [NSLocalizedDescriptionKey: "Codex 用量接口没有可识别的窗口数据"]
+                userInfo: [NSLocalizedDescriptionKey: "The Codex usage API returned no recognized quota windows"]
             )
         }
 
         return UsageSnapshot(
             sourceDate: Date(),
-            sourceName: "Codex 官方用量接口",
+            sourceName: "Official Codex usage API",
             planType: json["plan_type"] as? String,
             fiveHourUsedPercent: fiveHour?.usedPercent,
             weeklyUsedPercent: weekly?.usedPercent,
@@ -652,7 +736,7 @@ final class CodexQuotaReader {
     private func readLogFallback(apiError: Error) -> UsageSnapshot {
         let existingPaths = databasePaths.filter { FileManager.default.fileExists(atPath: $0) }
         guard !existingPaths.isEmpty else {
-            return .empty(error: "官方接口不可用，且找不到 Codex 本地日志。")
+            return .empty(error: "The official API is unavailable, and no local Codex logs were found.")
         }
 
         let query = """
@@ -685,7 +769,7 @@ final class CodexQuotaReader {
         }
 
         let detail = lastError?.localizedDescription ?? apiError.localizedDescription
-        return .empty(error: "读取 Codex 用量失败：\(detail)")
+        return .empty(error: "Failed to load Codex usage: \(detail)")
     }
 
     private func runSQLite(databasePath: String, query: String) throws -> String {
@@ -747,7 +831,7 @@ final class CodexQuotaReader {
 
         return UsageSnapshot(
             sourceDate: Date(timeIntervalSince1970: timestamp),
-            sourceName: "本地日志（备用）",
+            sourceName: "Local logs (fallback)",
             planType: headerValue("x-codex-plan-type", in: body),
             fiveHourUsedPercent: fiveHour?.usedPercent,
             weeklyUsedPercent: weekly?.usedPercent,
@@ -755,7 +839,7 @@ final class CodexQuotaReader {
             weeklyWindowMinutes: weekly?.durationMinutes,
             fiveHourResetAt: fiveHour?.resetAt,
             weeklyResetAt: weekly?.resetAt,
-            warningMessage: "官方接口暂不可用：\(apiError.localizedDescription)",
+            warningMessage: "The official API is temporarily unavailable: \(apiError.localizedDescription)",
             errorMessage: nil
         )
     }
@@ -812,7 +896,7 @@ private extension UsageSnapshot {
     static func empty(error: String) -> UsageSnapshot {
         UsageSnapshot(
             sourceDate: Date(),
-            sourceName: "不可用",
+            sourceName: "Unavailable",
             planType: nil,
             fiveHourUsedPercent: nil,
             weeklyUsedPercent: nil,
@@ -829,15 +913,21 @@ private extension UsageSnapshot {
 final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
     private enum MenuBarProvider: String {
         case codex
+        case claude
         case openCodeGo
     }
 
     private let reader = CodexQuotaReader()
     private let openCodeGoReader = OpenCodeGoReader()
+    private let claudeReader = ClaudeUsageReader()
+    private var claudeSnapshot: ClaudeSnapshot?
+    private var claudeRefreshTimer: Timer?
+    private var isRefreshingClaude = false
     private var statusItem: NSStatusItem?
 
     private var snapshot: UsageSnapshot?
     private var refreshTimer: Timer?
+    private var openCodeGoRefreshTimer: Timer?
     private var isRefreshing = false
 
     private struct OpenCodeGoAccountState {
@@ -863,30 +953,43 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
             selectedMenuBarProvider = provider
         }
         statusItem = NSStatusBar.system.statusItem(withLength: NSStatusItem.variableLength)
-        statusItem?.isVisible = true
+        statusItem?.isVisible = false
 
         loadOpenCodeGoAccounts()
 
         if let button = statusItem?.button {
             button.font = NSFont.monospacedSystemFont(ofSize: 12, weight: .medium)
-            button.image = NSImage(systemSymbolName: "bolt.circle.fill", accessibilityDescription: "Codex")
             button.imagePosition = .imageLeading
-            button.title = " 同步中"
-            button.toolTip = "Codex 与 OpenCode Go 剩余额度"
+            button.toolTip = "Remaining Codex, Claude and OpenCode Go quota"
+            renderStatusTitle(
+                " Syncing",
+                systemSymbolName: "bolt.circle.fill",
+                accessibilityDescription: "Codex"
+            )
             debugLog("status button created")
         } else {
             debugLog("status button missing")
         }
+        statusItem?.isVisible = true
 
         refresh()
         refreshOpenCodeGo(force: true)
-        refreshTimer = Timer.scheduledTimer(withTimeInterval: 30, repeats: true) { [weak self] _ in
-            self?.refreshAll()
+        refreshClaude()
+        claudeRefreshTimer = Timer.scheduledTimer(withTimeInterval: 120, repeats: true) { [weak self] _ in
+            self?.refreshClaude()
+        }
+        refreshTimer = Timer.scheduledTimer(withTimeInterval: 120, repeats: true) { [weak self] _ in
+            self?.refresh()
+        }
+        openCodeGoRefreshTimer = Timer.scheduledTimer(withTimeInterval: 30, repeats: true) { [weak self] _ in
+            self?.refreshOpenCodeGo(force: false)
         }
     }
 
     func applicationWillTerminate(_ notification: Notification) {
         refreshTimer?.invalidate()
+        openCodeGoRefreshTimer?.invalidate()
+        claudeRefreshTimer?.invalidate()
     }
 
     func menuWillOpen(_ menu: NSMenu) {
@@ -901,6 +1004,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
 
     @objc private func refreshNow() {
         refresh()
+        refreshClaude()
         refreshOpenCodeGo(force: true)
     }
 
@@ -916,6 +1020,18 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
             return
         }
         NSWorkspace.shared.open(URL(fileURLWithPath: path))
+    }
+
+    @objc private func openClaude() {
+        let candidates = [
+            "/Applications/Claude.app",
+            "\(NSHomeDirectory())/Applications/Claude.app"
+        ]
+        if let path = candidates.first(where: { FileManager.default.fileExists(atPath: $0) }) {
+            NSWorkspace.shared.open(URL(fileURLWithPath: path))
+        } else if let url = URL(string: "https://claude.ai/settings/usage") {
+            NSWorkspace.shared.open(url)
+        }
     }
 
     @objc private func openOpenCodeGo(_ sender: Any?) {
@@ -951,13 +1067,13 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         }
         let account = openCodeGoAccounts[index]
         let alert = NSAlert()
-        alert.messageText = "设置 \(account.label) Cookie"
-        alert.informativeText = "粘贴浏览器 Cookie 即可，只会保存 auth 相关字段"
+        alert.messageText = "Set \(account.label) Cookie"
+        alert.informativeText = "Paste your browser cookie. Only auth-related fields will be saved."
         let textField = NSSecureTextField(frame: NSRect(x: 0, y: 0, width: 320, height: 24))
         textField.placeholderString = "auth=...; __Host-auth=..."
         alert.accessoryView = textField
-        alert.addButton(withTitle: "保存")
-        alert.addButton(withTitle: "取消")
+        alert.addButton(withTitle: "Save")
+        alert.addButton(withTitle: "Cancel")
         guard alert.runModal() == .alertFirstButtonReturn else {
             return
         }
@@ -988,14 +1104,14 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         }
         let account = openCodeGoAccounts[index]
         let alert = NSAlert()
-        alert.messageText = "设置 \(account.label) Workspace"
-        alert.informativeText = "可填写 wrk_... 或完整 workspace 链接"
+        alert.messageText = "Set \(account.label) Workspace"
+        alert.informativeText = "Enter wrk_... or a complete workspace URL."
         let textField = NSTextField(frame: NSRect(x: 0, y: 0, width: 320, height: 24))
-        textField.placeholderString = "wrk_... 或 https://opencode.ai/workspace/..."
+        textField.placeholderString = "wrk_... or https://opencode.ai/workspace/..."
         textField.stringValue = account.workspaceOverride ?? ""
         alert.accessoryView = textField
-        alert.addButton(withTitle: "保存")
-        alert.addButton(withTitle: "取消")
+        alert.addButton(withTitle: "Save")
+        alert.addButton(withTitle: "Cancel")
         guard alert.runModal() == .alertFirstButtonReturn else {
             return
         }
@@ -1015,18 +1131,17 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
     }
 
     @objc private func menuBarProviderChanged(_ sender: NSSegmentedControl) {
-        selectedMenuBarProvider = sender.selectedSegment == 0 ? .codex : .openCodeGo
+        switch sender.selectedSegment {
+        case 0: selectedMenuBarProvider = .codex
+        case 1: selectedMenuBarProvider = .claude
+        default: selectedMenuBarProvider = .openCodeGo
+        }
         UserDefaults.standard.set(selectedMenuBarProvider.rawValue, forKey: "SelectedMenuBarProvider")
         updateStatusTitle()
     }
 
     @objc private func quit() {
         NSApplication.shared.terminate(nil)
-    }
-
-    private func refreshAll() {
-        refresh()
-        refreshOpenCodeGo(force: false)
     }
 
     private func refresh() {
@@ -1051,6 +1166,30 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
                     "fiveHour=\(snapshot.fiveHourUsedPercent.map(String.init) ?? "--") " +
                     "weekly=\(snapshot.weeklyUsedPercent.map(String.init) ?? "--") " +
                     "banked=\(bankedCount.map(String.init) ?? "--")"
+                )
+            }
+        }
+    }
+
+    private func refreshClaude() {
+        guard !isRefreshingClaude else {
+            return
+        }
+        isRefreshingClaude = true
+        claudeReader.read(previous: claudeSnapshot) { [weak self] snapshot in
+            DispatchQueue.main.async {
+                guard let self else {
+                    return
+                }
+                self.isRefreshingClaude = false
+                self.claudeSnapshot = snapshot
+                self.updateStatusTitle()
+                self.rebuildMenu()
+                debugLog(
+                    "claude refreshed ok=\(snapshot.errorMessage == nil) " +
+                    "fiveHour=\(snapshot.fiveHour.map { String($0.remainingPercentInt) } ?? "--") " +
+                    "weekly=\(snapshot.weekly.map { String($0.remainingPercentInt) } ?? "--") " +
+                    "error=\(snapshot.errorMessage ?? "none")"
                 )
             }
         }
@@ -1179,24 +1318,43 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         switch selectedMenuBarProvider {
         case .codex:
             guard let snapshot, snapshot.errorMessage == nil else {
-                button.image = NSImage(systemSymbolName: "bolt.circle.fill", accessibilityDescription: "Codex")
-                button.title = " --"
+                renderStatusTitle(
+                    " --",
+                    systemSymbolName: "bolt.circle.fill",
+                    accessibilityDescription: "Codex"
+                )
                 debugLog("status title set: --")
-                updateStatusItemLength()
                 return
             }
-            button.image = NSImage(systemSymbolName: "bolt.circle.fill", accessibilityDescription: "Codex")
-            let fiveHour = snapshot.fiveHourRemainingPercent
-            let weekly = snapshot.weeklyRemainingPercent
-            if let fiveHour, let weekly {
-                button.title = " 5h\(fiveHour)% W\(weekly)%"
-            } else if let fiveHour {
-                button.title = " 5h\(fiveHour)%"
-            } else if let weekly {
-                button.title = " W\(weekly)%"
-            } else {
-                button.title = " --"
+            let title = codexMenuBarTitle(
+                fiveHourRemainingPercent: snapshot.fiveHourRemainingPercent,
+                weeklyRemainingPercent: snapshot.weeklyRemainingPercent
+            )
+            renderStatusTitle(
+                title,
+                systemSymbolName: "bolt.circle.fill",
+                accessibilityDescription: "Codex"
+            )
+            debugLog("status title set:\(button.title)")
+
+        case .claude:
+            guard let claudeSnapshot, claudeSnapshot.hasAnyData else {
+                renderStatusTitle(
+                    " --",
+                    systemSymbolName: "sparkle",
+                    accessibilityDescription: "Claude"
+                )
+                debugLog("status title set: --")
+                break
             }
+            renderStatusTitle(
+                claudeMenuBarTitle(
+                    fiveHourRemainingPercent: claudeSnapshot.fiveHour?.remainingPercentInt,
+                    weeklyRemainingPercent: claudeSnapshot.weekly?.remainingPercentInt
+                ),
+                systemSymbolName: "sparkle",
+                accessibilityDescription: "Claude"
+            )
             debugLog("status title set:\(button.title)")
 
         case .openCodeGo:
@@ -1209,35 +1367,64 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
                 return "\(fiveHour) W\(weekly)"
             }
             guard !parts.isEmpty else {
-                button.image = NSImage(systemSymbolName: "diamond.fill", accessibilityDescription: "OpenCode Go")
-                button.title = " --"
+                renderStatusTitle(
+                    " --",
+                    systemSymbolName: "diamond.fill",
+                    accessibilityDescription: "OpenCode Go"
+                )
                 debugLog("status title set: --")
-                updateStatusItemLength()
                 return
             }
-            button.image = NSImage(systemSymbolName: "diamond.fill", accessibilityDescription: "OpenCode Go")
-            button.title = " " + parts.joined(separator: " · ")
+            renderStatusTitle(
+                " " + parts.joined(separator: " · "),
+                systemSymbolName: "diamond.fill",
+                accessibilityDescription: "OpenCode Go"
+            )
             debugLog("status title set:\(button.title)")
         }
-        updateStatusItemLength()
         updateOpenCodeGoTooltip()
+    }
+
+    private func renderStatusTitle(
+        _ title: String,
+        systemSymbolName: String,
+        accessibilityDescription: String
+    ) {
+        guard let button = statusItem?.button else {
+            return
+        }
+        button.cell?.wraps = false
+        button.cell?.usesSingleLineMode = true
+        button.cell?.lineBreakMode = .byClipping
+        button.image = NSImage(
+            systemSymbolName: systemSymbolName,
+            accessibilityDescription: accessibilityDescription
+        )
+        button.title = singleLineMenuBarTitle(title)
+        updateStatusItemLength()
     }
 
     private func updateOpenCodeGoTooltip() {
         guard let button = statusItem?.button else {
             return
         }
-        var lines = ["Codex 与 OpenCode Go 剩余额度"]
+        var lines = ["Remaining Codex, Claude and OpenCode Go quota"]
+        if let claude = claudeSnapshot {
+            let five = claude.fiveHour.map { "\($0.remainingPercentInt)%" } ?? "--"
+            let week = claude.weekly.map { "\($0.remainingPercentInt)%" } ?? "--"
+            let state = claude.errorMessage ?? (claude.isStale ? "Delayed" : "Live")
+            lines.append("Claude: 5h \(five) · W \(week) (\(state))")
+        }
         for account in openCodeGoAccounts {
             guard let snapshot = account.snapshot else {
-                lines.append("\(account.label)：尚未同步")
+                lines.append("\(account.label): Not synced yet")
                 continue
             }
             let rolling = snapshot.rolling5h.map { "\($0.remainingPercentInt)%" } ?? "--"
             let weekly = snapshot.weekly.map { "\($0.remainingPercentInt)%" } ?? "--"
             let monthly = snapshot.monthly.map { "\($0.remainingPercentInt)%" } ?? "--"
-            let state = snapshot.errorMessage ?? (snapshot.isStale ? "同步延迟" : "实时")
-            lines.append("\(account.label)：5h \(rolling) · W \(weekly) · M \(monthly)（\(state)）")
+            let state = snapshot.errorMessage ?? (snapshot.isStale ? "Delayed" : "Live")
+            lines.append("\(account.label): 5h \(rolling) · W \(weekly) · M \(monthly) (\(state))")
         }
         button.toolTip = lines.joined(separator: "\n")
     }
@@ -1256,12 +1443,13 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
 
         if let snapshot {
             if let error = snapshot.errorMessage {
-                addDisabledItem("Codex 用量暂不可读", to: menu)
+                addDisabledItem("Codex usage is temporarily unavailable", to: menu)
                 addDisabledItem(error, to: menu)
             } else {
                 let panelItem = NSMenuItem()
                 panelItem.view = QuotaPanelView(
                     snapshot: snapshot,
+                    claude: claudeSnapshot,
                     openCodeGoAccounts: openCodeGoAccounts.map {
                         (label: $0.label, snapshot: $0.snapshot)
                     }
@@ -1276,25 +1464,29 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
                 }
             }
         } else {
-            addDisabledItem("Codex 用量加载中", to: menu)
+            addDisabledItem("Loading Codex usage", to: menu)
         }
 
         menu.addItem(makeMenuBarProviderSelector())
         menu.addItem(NSMenuItem.separator())
 
-        let refreshTitle = isRefreshing ? "正在同步…" : "立即同步"
+        let refreshTitle = isRefreshing ? "Syncing…" : "Sync Now"
         let refreshItem = NSMenuItem(title: refreshTitle, action: #selector(refreshNow), keyEquivalent: "r")
         refreshItem.target = self
         refreshItem.isEnabled = !isRefreshing
         menu.addItem(refreshItem)
 
-        let openItem = NSMenuItem(title: "打开 Codex", action: #selector(openCodex), keyEquivalent: "o")
+        let openItem = NSMenuItem(title: "Open Codex", action: #selector(openCodex), keyEquivalent: "o")
         openItem.target = self
         menu.addItem(openItem)
 
+        let openClaudeItem = NSMenuItem(title: "Open Claude", action: #selector(openClaude), keyEquivalent: "c")
+        openClaudeItem.target = self
+        menu.addItem(openClaudeItem)
+
         for (index, account) in openCodeGoAccounts.enumerated() {
             let openGoItem = NSMenuItem(
-                title: "打开 \(account.label)",
+                title: "Open \(account.label)",
                 action: #selector(openOpenCodeGo(_:)),
                 keyEquivalent: index == 0 ? "g" : ""
             )
@@ -1303,7 +1495,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
             menu.addItem(openGoItem)
 
             let cookieItem = NSMenuItem(
-                title: "设置 \(account.label) Cookie…",
+                title: "Set \(account.label) Cookie…",
                 action: #selector(setOpenCodeCookie(_:)),
                 keyEquivalent: ""
             )
@@ -1312,7 +1504,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
             menu.addItem(cookieItem)
 
             let workspaceItem = NSMenuItem(
-                title: "设置 \(account.label) Workspace…",
+                title: "Set \(account.label) Workspace…",
                 action: #selector(setOpenCodeWorkspace(_:)),
                 keyEquivalent: ""
             )
@@ -1321,7 +1513,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
             menu.addItem(workspaceItem)
 
             let clearCookieItem = NSMenuItem(
-                title: "清除 \(account.label) Cookie",
+                title: "Clear \(account.label) Cookie",
                 action: #selector(clearOpenCodeCookie(_:)),
                 keyEquivalent: ""
             )
@@ -1336,7 +1528,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
 
         menu.addItem(NSMenuItem.separator())
 
-        let quitItem = NSMenuItem(title: "退出", action: #selector(quit), keyEquivalent: "q")
+        let quitItem = NSMenuItem(title: "Quit", action: #selector(quit), keyEquivalent: "q")
         quitItem.target = self
         menu.addItem(quitItem)
 
@@ -1345,18 +1537,22 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
 
     private func makeMenuBarProviderSelector() -> NSMenuItem {
         let container = NSView(frame: NSRect(x: 0, y: 0, width: 320, height: 46))
-        let label = NSTextField(labelWithString: "菜单栏显示")
+        let label = NSTextField(labelWithString: "Menu bar display")
         label.font = .systemFont(ofSize: 11, weight: .medium)
         label.frame = NSRect(x: 12, y: 30, width: 120, height: 14)
 
         let control = NSSegmentedControl(
-            labels: ["Codex", "OpenCode Go"],
+            labels: ["Codex", "Claude", "OpenCode Go"],
             trackingMode: .selectOne,
             target: self,
             action: #selector(menuBarProviderChanged(_:))
         )
         control.segmentStyle = .rounded
-        control.selectedSegment = selectedMenuBarProvider == .openCodeGo ? 1 : 0
+        switch selectedMenuBarProvider {
+        case .codex: control.selectedSegment = 0
+        case .claude: control.selectedSegment = 1
+        case .openCodeGo: control.selectedSegment = 2
+        }
         control.frame = NSRect(x: 12, y: 8, width: 296, height: 20)
 
         container.addSubview(label)

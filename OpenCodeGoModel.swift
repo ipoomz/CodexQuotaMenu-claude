@@ -10,15 +10,15 @@ enum OpenCodeGoUsageError: LocalizedError, Equatable {
     var errorDescription: String? {
         switch self {
         case .invalidCredentials:
-            return "OpenCode Go 登录已过期，需要重新登录"
+            return "Your OpenCode Go session has expired. Please sign in again."
         case .cookieMissing:
-            return "需要设置 OpenCode Cookie"
+            return "An OpenCode cookie is required"
         case let .networkError(message):
-            return "OpenCode Go 网络错误：\(Self.redactSecrets(message))"
+            return "OpenCode Go network error: \(Self.redactSecrets(message))"
         case let .apiError(message):
-            return "OpenCode Go 接口错误：\(Self.redactSecrets(message))"
+            return "OpenCode Go API error: \(Self.redactSecrets(message))"
         case let .parseFailed(message):
-            return "OpenCode Go 解析失败：\(Self.redactSecrets(message))"
+            return "Failed to parse OpenCode Go data: \(Self.redactSecrets(message))"
         }
     }
 
@@ -224,7 +224,7 @@ enum OpenCodeGoParser {
             pattern: #"rollingUsage[^}]*?resetInSec\s*:\s*([0-9]+)"#,
             text: text
         ) else {
-            throw OpenCodeGoUsageError.parseFailed("缺少 rolling usage 字段")
+            throw OpenCodeGoUsageError.parseFailed("Missing rolling usage field")
         }
 
         let weeklyPercent = extractDouble(
