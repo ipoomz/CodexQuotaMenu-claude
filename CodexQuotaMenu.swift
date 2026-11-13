@@ -29,6 +29,7 @@ final class QuotaPanelView: NSView {
     private let bankedCredits: [BankedResetCredit]
     private let openCodeGoAccounts: [(label: String, snapshot: OpenCodeGoSnapshot?)]
     private let claude: ClaudeSnapshot?
+    private let includeCodex: Bool
     private let panelSize: NSSize
     private let syncTimeFormatter: DateFormatter = {
         let formatter = DateFormatter()
@@ -40,15 +41,17 @@ final class QuotaPanelView: NSView {
     init(
         snapshot: UsageSnapshot,
         claude: ClaudeSnapshot?,
+        includeCodex: Bool = true,
         openCodeGoAccounts: [(label: String, snapshot: OpenCodeGoSnapshot?)]
     ) {
         self.snapshot = snapshot
         self.claude = claude
+        self.includeCodex = includeCodex
         self.openCodeGoAccounts = openCodeGoAccounts
         bankedCredits = snapshot.bankedResetSummary?.availableCredits ?? []
         let rowCount = max(1, bankedCredits.count)
         let codexBottom = Self.bankedRowsTop + CGFloat(rowCount) * Self.bankedRowHeight + 8
-        let claudeTop = codexBottom + 12
+        let claudeTop = includeCodex ? codexBottom + 12 : 0
         let openCodeTop = claudeTop + Self.claudeSectionHeight(claude) + 12
         let sourceTop = openCodeTop + Self.openCodeSectionHeight(accounts: openCodeGoAccounts) + 8
         panelSize = NSSize(width: Self.panelWidth, height: sourceTop + 17)
@@ -74,50 +77,54 @@ final class QuotaPanelView: NSView {
     override func draw(_ dirtyRect: NSRect) {
         super.draw(dirtyRect)
 
-        drawText(
-            "Codex",
-            in: NSRect(x: 16, y: 12, width: 180, height: 24),
-            font: .systemFont(ofSize: 15, weight: .semibold),
-            color: .labelColor
-        )
-
-        if let planType = snapshot.planType {
+        if includeCodex {
             drawText(
-                planType.capitalized,
-                in: NSRect(x: 220, y: 14, width: 114, height: 20),
-                font: .systemFont(ofSize: 11, weight: .medium),
-                color: .secondaryLabelColor,
-                alignment: .right
+                "Codex",
+                in: NSRect(x: 16, y: 12, width: 180, height: 24),
+                font: .systemFont(ofSize: 15, weight: .semibold),
+                color: .labelColor
             )
+
+            if let planType = snapshot.planType {
+                drawText(
+                    planType.capitalized,
+                    in: NSRect(x: 220, y: 14, width: 114, height: 20),
+                    font: .systemFont(ofSize: 11, weight: .medium),
+                    color: .secondaryLabelColor,
+                    alignment: .right
+                )
+            }
+
+            NSColor.separatorColor.withAlphaComponent(0.55).setFill()
+            NSRect(x: 16, y: 43, width: 318, height: 1).fill()
+
+            drawMetric(
+                title: "5-hour quota",
+                remainingPercent: snapshot.fiveHourRemainingPercent,
+                resetAt: snapshot.fiveHourResetAt,
+                top: 57
+            )
+            drawMetric(
+                title: "Weekly quota",
+                remainingPercent: snapshot.weeklyRemainingPercent,
+                resetAt: snapshot.weeklyResetAt,
+                top: 126
+            )
+
+            drawBankedResets()
         }
-
-        NSColor.separatorColor.withAlphaComponent(0.55).setFill()
-        NSRect(x: 16, y: 43, width: 318, height: 1).fill()
-
-        drawMetric(
-            title: "5-hour quota",
-            remainingPercent: snapshot.fiveHourRemainingPercent,
-            resetAt: snapshot.fiveHourResetAt,
-            top: 57
-        )
-        drawMetric(
-            title: "Weekly quota",
-            remainingPercent: snapshot.weeklyRemainingPercent,
-            resetAt: snapshot.weeklyResetAt,
-            top: 126
-        )
-
-        drawBankedResets()
 
         let rowCount = max(1, bankedCredits.count)
         let codexBottom = Self.bankedRowsTop + CGFloat(rowCount) * Self.bankedRowHeight + 8
-        let claudeTop = codexBottom + 12
+        let claudeTop = includeCodex ? codexBottom + 12 : 0
         drawClaude(at: claudeTop)
         let openCodeTop = claudeTop + Self.claudeSectionHeight(claude) + 12
         drawOpenCodeGo(at: openCodeTop)
 
         let sourceTop = openCodeTop + Self.openCodeSectionHeight(accounts: openCodeGoAccounts) + 8
-        var source = "Synced \(syncTimeFormatter.string(from: snapshot.sourceDate)) · \(snapshot.sourceName)"
+        var source = includeCodex
+            ? "Synced \(syncTimeFormatter.string(from: snapshot.sourceDate)) · \(snapshot.sourceName)"
+            : "Codex unavailable"
         if let claude, claude.hasAnyData {
             source += " · Claude synced \(syncTimeFormatter.string(from: claude.lastUpdated))"
         }
@@ -1189,6 +1196,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
                     "claude refreshed ok=\(snapshot.errorMessage == nil) " +
                     "fiveHour=\(snapshot.fiveHour.map { String($0.remainingPercentInt) } ?? "--") " +
                     "weekly=\(snapshot.weekly.map { String($0.remainingPercentInt) } ?? "--") " +
+                    "fiveHourReset=\(snapshot.fiveHour?.resetAt.map { ISO8601DateFormatter().string(from: $0) } ?? "nil") " +
+                    "weeklyReset=\(snapshot.weekly?.resetAt.map { ISO8601DateFormatter().string(from: $0) } ?? "nil") " +
                     "error=\(snapshot.errorMessage ?? "none")"
                 )
             }
@@ -1445,6 +1454,16 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
             if let error = snapshot.errorMessage {
                 addDisabledItem("Codex usage is temporarily unavailable", to: menu)
                 addDisabledItem(error, to: menu)
+                let panelItem = NSMenuItem()
+                panelItem.view = QuotaPanelView(
+                    snapshot: snapshot,
+                    claude: claudeSnapshot,
+                    includeCodex: false,
+                    openCodeGoAccounts: openCodeGoAccounts.map {
+                        (label: $0.label, snapshot: $0.snapshot)
+                    }
+                )
+                menu.addItem(panelItem)
             } else {
                 let panelItem = NSMenuItem()
                 panelItem.view = QuotaPanelView(
