@@ -21,15 +21,21 @@ func debugLog(_ message: String) {
 }
 
 final class QuotaPanelView: NSView {
+    enum Section {
+        case codex
+        case claude
+        case openCodeGo
+    }
+
     private static let panelWidth: CGFloat = 350
     private static let bankedRowsTop: CGFloat = 233
     private static let bankedRowHeight: CGFloat = 30
     private static let metricHeight: CGFloat = 69
-    private let snapshot: UsageSnapshot
+    private let snapshot: UsageSnapshot?
     private let bankedCredits: [BankedResetCredit]
     private let openCodeGoAccounts: [(label: String, snapshot: OpenCodeGoSnapshot?)]
     private let claude: ClaudeSnapshot?
-    private let includeCodex: Bool
+    private let section: Section
     private let panelSize: NSSize
     private let syncTimeFormatter: DateFormatter = {
         let formatter = DateFormatter()
@@ -39,22 +45,27 @@ final class QuotaPanelView: NSView {
     }()
 
     init(
-        snapshot: UsageSnapshot,
+        section: Section,
+        snapshot: UsageSnapshot?,
         claude: ClaudeSnapshot?,
-        includeCodex: Bool = true,
         openCodeGoAccounts: [(label: String, snapshot: OpenCodeGoSnapshot?)]
     ) {
         self.snapshot = snapshot
         self.claude = claude
-        self.includeCodex = includeCodex
+        self.section = section
         self.openCodeGoAccounts = openCodeGoAccounts
-        bankedCredits = snapshot.bankedResetSummary?.availableCredits ?? []
-        let rowCount = max(1, bankedCredits.count)
-        let codexBottom = Self.bankedRowsTop + CGFloat(rowCount) * Self.bankedRowHeight + 8
-        let claudeTop = includeCodex ? codexBottom + 12 : 0
-        let openCodeTop = claudeTop + Self.claudeSectionHeight(claude) + 12
-        let sourceTop = openCodeTop + Self.openCodeSectionHeight(accounts: openCodeGoAccounts) + 8
-        panelSize = NSSize(width: Self.panelWidth, height: sourceTop + 17)
+        bankedCredits = snapshot?.bankedResetSummary?.availableCredits ?? []
+        let contentHeight: CGFloat
+        switch section {
+        case .codex:
+            let rowCount = max(1, bankedCredits.count)
+            contentHeight = Self.bankedRowsTop + CGFloat(rowCount) * Self.bankedRowHeight + 8
+        case .claude:
+            contentHeight = Self.claudeSectionHeight(claude)
+        case .openCodeGo:
+            contentHeight = Self.openCodeSectionHeight(accounts: openCodeGoAccounts)
+        }
+        panelSize = NSSize(width: Self.panelWidth, height: contentHeight + 8 + 17)
         super.init(frame: NSRect(origin: .zero, size: panelSize))
         setAccessibilityElement(true)
         setAccessibilityRole(.group)
@@ -77,7 +88,13 @@ final class QuotaPanelView: NSView {
     override func draw(_ dirtyRect: NSRect) {
         super.draw(dirtyRect)
 
-        if includeCodex {
+        var contentBottom: CGFloat = 0
+        var source = ""
+        switch section {
+        case .codex:
+            guard let codexSnapshot = snapshot else {
+                return
+            }
             drawText(
                 "Codex",
                 in: NSRect(x: 16, y: 12, width: 180, height: 24),
@@ -85,7 +102,7 @@ final class QuotaPanelView: NSView {
                 color: .labelColor
             )
 
-            if let planType = snapshot.planType {
+            if let planType = codexSnapshot.planType {
                 drawText(
                     planType.capitalized,
                     in: NSRect(x: 220, y: 14, width: 114, height: 20),
@@ -100,39 +117,36 @@ final class QuotaPanelView: NSView {
 
             drawMetric(
                 title: "5-hour quota",
-                remainingPercent: snapshot.fiveHourRemainingPercent,
-                resetAt: snapshot.fiveHourResetAt,
+                remainingPercent: codexSnapshot.fiveHourRemainingPercent,
+                resetAt: codexSnapshot.fiveHourResetAt,
                 top: 57
             )
             drawMetric(
                 title: "Weekly quota",
-                remainingPercent: snapshot.weeklyRemainingPercent,
-                resetAt: snapshot.weeklyResetAt,
+                remainingPercent: codexSnapshot.weeklyRemainingPercent,
+                resetAt: codexSnapshot.weeklyResetAt,
                 top: 126
             )
 
             drawBankedResets()
-        }
-
-        let rowCount = max(1, bankedCredits.count)
-        let codexBottom = Self.bankedRowsTop + CGFloat(rowCount) * Self.bankedRowHeight + 8
-        let claudeTop = includeCodex ? codexBottom + 12 : 0
-        drawClaude(at: claudeTop)
-        let openCodeTop = claudeTop + Self.claudeSectionHeight(claude) + 12
-        drawOpenCodeGo(at: openCodeTop)
-
-        let sourceTop = openCodeTop + Self.openCodeSectionHeight(accounts: openCodeGoAccounts) + 8
-        var source = includeCodex
-            ? "Synced \(syncTimeFormatter.string(from: snapshot.sourceDate)) · \(snapshot.sourceName)"
-            : "Codex unavailable"
-        if let claude, claude.hasAnyData {
-            source += " · Claude synced \(syncTimeFormatter.string(from: claude.lastUpdated))"
-        }
-        for account in openCodeGoAccounts {
-            if let accountSnapshot = account.snapshot {
-                source += " · \(account.label) synced \(syncTimeFormatter.string(from: accountSnapshot.lastUpdated))"
+            let rowCount = max(1, bankedCredits.count)
+            contentBottom = Self.bankedRowsTop + CGFloat(rowCount) * Self.bankedRowHeight + 8
+            source = "Synced \(syncTimeFormatter.string(from: codexSnapshot.sourceDate)) · \(codexSnapshot.sourceName)"
+        case .claude:
+            drawClaude(at: 0)
+            contentBottom = Self.claudeSectionHeight(claude)
+            if let claude, claude.hasAnyData {
+                source = "Synced \(syncTimeFormatter.string(from: claude.lastUpdated)) · Claude Code sign-in"
             }
+        case .openCodeGo:
+            drawOpenCodeGo(at: 0)
+            contentBottom = Self.openCodeSectionHeight(accounts: openCodeGoAccounts)
+            source = openCodeGoAccounts.compactMap { account in
+                account.snapshot.map { "\(account.label) synced \(syncTimeFormatter.string(from: $0.lastUpdated))" }
+            }.joined(separator: " · ")
         }
+
+        let sourceTop = contentBottom + 8
         drawText(
             source,
             in: NSRect(x: 16, y: sourceTop, width: 318, height: 15),
@@ -156,8 +170,6 @@ final class QuotaPanelView: NSView {
     }
 
     private func drawClaude(at top: CGFloat) {
-        NSColor.separatorColor.withAlphaComponent(0.55).setFill()
-        NSRect(x: 16, y: top, width: 318, height: 1).fill()
 
         drawText(
             "Claude",
@@ -241,9 +253,6 @@ final class QuotaPanelView: NSView {
     }
 
     private func drawOpenCodeGo(at top: CGFloat) {
-        NSColor.separatorColor.withAlphaComponent(0.55).setFill()
-        NSRect(x: 16, y: top, width: 318, height: 1).fill()
-
         var cursor = top
         for (index, account) in openCodeGoAccounts.enumerated() {
             if index > 0 {
@@ -384,7 +393,7 @@ final class QuotaPanelView: NSView {
             color: .labelColor
         )
 
-        if let summary = snapshot.bankedResetSummary {
+        if let summary = snapshot?.bankedResetSummary {
             let badgeRect = NSRect(x: 250, y: 202, width: 84, height: 25)
             NSColor.systemGreen.withAlphaComponent(0.14).setFill()
             NSBezierPath(roundedRect: badgeRect, xRadius: 12.5, yRadius: 12.5).fill()
@@ -406,7 +415,7 @@ final class QuotaPanelView: NSView {
         }
 
         guard !bankedCredits.isEmpty else {
-            let message = snapshot.bankedResetSummary == nil ? "Banked resets are temporarily unavailable" : "No resets available"
+            let message = snapshot?.bankedResetSummary == nil ? "Banked resets are temporarily unavailable" : "No resets available"
             drawText(
                 message,
                 in: NSRect(x: 16, y: Self.bankedRowsTop + 4, width: 318, height: 18),
@@ -1145,6 +1154,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         }
         UserDefaults.standard.set(selectedMenuBarProvider.rawValue, forKey: "SelectedMenuBarProvider")
         updateStatusTitle()
+        rebuildMenu()
+        statusItem?.menu?.cancelTracking()
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.15) { [weak self] in
+            self?.statusItem?.button?.performClick(nil)
+        }
     }
 
     @objc private func quit() {
@@ -1450,43 +1464,45 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         let menu = NSMenu()
         menu.delegate = self
 
-        if let snapshot {
-            if let error = snapshot.errorMessage {
-                addDisabledItem("Codex usage is temporarily unavailable", to: menu)
-                addDisabledItem(error, to: menu)
-                let panelItem = NSMenuItem()
-                panelItem.view = QuotaPanelView(
-                    snapshot: snapshot,
-                    claude: claudeSnapshot,
-                    includeCodex: false,
-                    openCodeGoAccounts: openCodeGoAccounts.map {
-                        (label: $0.label, snapshot: $0.snapshot)
-                    }
-                )
-                menu.addItem(panelItem)
-            } else {
-                let panelItem = NSMenuItem()
-                panelItem.view = QuotaPanelView(
-                    snapshot: snapshot,
-                    claude: claudeSnapshot,
-                    openCodeGoAccounts: openCodeGoAccounts.map {
-                        (label: $0.label, snapshot: $0.snapshot)
-                    }
-                )
-                menu.addItem(panelItem)
-                let warnings = [snapshot.warningMessage, snapshot.bankedResetErrorMessage].compactMap { $0 }
-                if !warnings.isEmpty {
-                    menu.addItem(NSMenuItem.separator())
-                    for warning in warnings {
-                        addDisabledItem(warning, to: menu)
-                    }
-                }
-            }
-        } else {
-            addDisabledItem("Loading Codex usage", to: menu)
+        menu.addItem(makeMenuBarProviderSelector())
+        menu.addItem(NSMenuItem.separator())
+
+        let openCodeAccounts = openCodeGoAccounts.map { (label: $0.label, snapshot: $0.snapshot) }
+        func addPanel(_ section: QuotaPanelView.Section) {
+            let panelItem = NSMenuItem()
+            panelItem.view = QuotaPanelView(
+                section: section,
+                snapshot: snapshot,
+                claude: claudeSnapshot,
+                openCodeGoAccounts: openCodeAccounts
+            )
+            menu.addItem(panelItem)
         }
 
-        menu.addItem(makeMenuBarProviderSelector())
+        switch selectedMenuBarProvider {
+        case .codex:
+            if let snapshot {
+                if let error = snapshot.errorMessage {
+                    addDisabledItem("Codex usage is temporarily unavailable", to: menu)
+                    addDisabledItem(error, to: menu)
+                } else {
+                    addPanel(.codex)
+                    let warnings = [snapshot.warningMessage, snapshot.bankedResetErrorMessage].compactMap { $0 }
+                    if !warnings.isEmpty {
+                        menu.addItem(NSMenuItem.separator())
+                        for warning in warnings {
+                            addDisabledItem(warning, to: menu)
+                        }
+                    }
+                }
+            } else {
+                addDisabledItem("Loading Codex usage", to: menu)
+            }
+        case .claude:
+            addPanel(.claude)
+        case .openCodeGo:
+            addPanel(.openCodeGo)
+        }
         menu.addItem(NSMenuItem.separator())
 
         let refreshTitle = isRefreshing ? "Syncing…" : "Sync Now"
@@ -1495,15 +1511,19 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         refreshItem.isEnabled = !isRefreshing
         menu.addItem(refreshItem)
 
-        let openItem = NSMenuItem(title: "Open Codex", action: #selector(openCodex), keyEquivalent: "o")
-        openItem.target = self
-        menu.addItem(openItem)
+        if selectedMenuBarProvider == .codex {
+            let openItem = NSMenuItem(title: "Open Codex", action: #selector(openCodex), keyEquivalent: "o")
+            openItem.target = self
+            menu.addItem(openItem)
+        }
 
-        let openClaudeItem = NSMenuItem(title: "Open Claude", action: #selector(openClaude), keyEquivalent: "c")
-        openClaudeItem.target = self
-        menu.addItem(openClaudeItem)
+        if selectedMenuBarProvider == .claude {
+            let openClaudeItem = NSMenuItem(title: "Open Claude", action: #selector(openClaude), keyEquivalent: "c")
+            openClaudeItem.target = self
+            menu.addItem(openClaudeItem)
+        }
 
-        for (index, account) in openCodeGoAccounts.enumerated() {
+        for (index, account) in openCodeGoAccounts.enumerated() where selectedMenuBarProvider == .openCodeGo {
             let openGoItem = NSMenuItem(
                 title: "Open \(account.label)",
                 action: #selector(openOpenCodeGo(_:)),
