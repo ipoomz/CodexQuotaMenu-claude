@@ -939,6 +939,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
     private var claudeSnapshot: ClaudeSnapshot?
     private var claudeRefreshTimer: Timer?
     private var isRefreshingClaude = false
+    private var claudeFailureCount = 0
+    private var claudeNextAttempt = Date.distantPast
+    private var claudeLastAttempt = Date.distantPast
     private var statusItem: NSStatusItem?
 
     private var snapshot: UsageSnapshot?
@@ -990,9 +993,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
 
         refresh()
         refreshOpenCodeGo(force: true)
-        refreshClaude()
-        claudeRefreshTimer = Timer.scheduledTimer(withTimeInterval: 120, repeats: true) { [weak self] _ in
-            self?.refreshClaude()
+        refreshClaude(force: true)
+        claudeRefreshTimer = Timer.scheduledTimer(withTimeInterval: 30, repeats: true) { [weak self] _ in
+            self?.refreshClaude(force: false)
         }
         refreshTimer = Timer.scheduledTimer(withTimeInterval: 120, repeats: true) { [weak self] _ in
             self?.refresh()
@@ -1020,7 +1023,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
 
     @objc private func refreshNow() {
         refresh()
-        refreshClaude()
+        refreshClaude(force: true)
         refreshOpenCodeGo(force: true)
     }
 
@@ -1192,10 +1195,20 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         }
     }
 
-    private func refreshClaude() {
+    private func refreshClaude(force: Bool) {
         guard !isRefreshingClaude else {
             return
         }
+        // The usage endpoint rate limits aggressively: poll every 5 minutes and
+        // back off after failures. Manual syncs only need a short spacing.
+        let minimumSpacing: TimeInterval = force ? 20 : 0
+        if Date() < claudeNextAttempt, !force {
+            return
+        }
+        if force, Date().timeIntervalSince(claudeLastAttempt) < minimumSpacing {
+            return
+        }
+        claudeLastAttempt = Date()
         isRefreshingClaude = true
         claudeReader.read(previous: claudeSnapshot) { [weak self] snapshot in
             DispatchQueue.main.async {
@@ -1204,6 +1217,14 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
                 }
                 self.isRefreshingClaude = false
                 self.claudeSnapshot = snapshot
+                if snapshot.errorMessage == nil {
+                    self.claudeFailureCount = 0
+                    self.claudeNextAttempt = Date().addingTimeInterval(300)
+                } else {
+                    self.claudeFailureCount += 1
+                    let backoff = min(300 * pow(2, Double(self.claudeFailureCount - 1)), 1800)
+                    self.claudeNextAttempt = Date().addingTimeInterval(max(backoff, snapshot.retryAfter ?? 0))
+                }
                 self.updateStatusTitle()
                 self.rebuildMenu()
                 debugLog(

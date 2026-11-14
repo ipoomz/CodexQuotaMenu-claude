@@ -37,8 +37,16 @@ final class ClaudeUsageReader {
                 return
             }
             guard (200...299).contains(http.statusCode), let data else {
-                let failure: ClaudeUsageError =
-                    (http.statusCode == 401 || http.statusCode == 403) ? .unauthorized : .api(http.statusCode)
+                let failure: ClaudeUsageError
+                switch http.statusCode {
+                case 401, 403:
+                    failure = .unauthorized
+                case 429:
+                    let retry = http.value(forHTTPHeaderField: "Retry-After").flatMap(TimeInterval.init)
+                    failure = .rateLimited(retryAfter: retry)
+                default:
+                    failure = .api(http.statusCode)
+                }
                 completion(.failure(failure, previous: previous))
                 return
             }

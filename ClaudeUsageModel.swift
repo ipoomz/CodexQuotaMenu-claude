@@ -5,6 +5,7 @@ enum ClaudeUsageError: LocalizedError, Equatable {
     case unauthorized
     case network(String)
     case api(Int)
+    case rateLimited(retryAfter: TimeInterval?)
     case parseFailed
 
     var errorDescription: String? {
@@ -17,6 +18,8 @@ enum ClaudeUsageError: LocalizedError, Equatable {
             return "Claude network error: \(message)"
         case let .api(status):
             return "Claude usage API returned HTTP \(status)"
+        case .rateLimited:
+            return "Claude usage API is rate limited (HTTP 429). Retrying later."
         case .parseFailed:
             return "Claude usage data could not be parsed"
         }
@@ -41,12 +44,17 @@ struct ClaudeSnapshot: Equatable {
     let lastUpdated: Date
     let isStale: Bool
     let errorMessage: String?
+    var retryAfter: TimeInterval? = nil
 
     var hasAnyData: Bool {
         fiveHour != nil || weekly != nil
     }
 
     static func failure(_ error: Error, previous: ClaudeSnapshot?, now: Date = Date()) -> ClaudeSnapshot {
+        var retryAfter: TimeInterval?
+        if case let ClaudeUsageError.rateLimited(seconds) = error {
+            retryAfter = seconds
+        }
         if let previous, previous.hasAnyData {
             return ClaudeSnapshot(
                 fiveHour: previous.fiveHour,
@@ -56,7 +64,8 @@ struct ClaudeSnapshot: Equatable {
                 planType: previous.planType,
                 lastUpdated: previous.lastUpdated,
                 isStale: true,
-                errorMessage: error.localizedDescription
+                errorMessage: error.localizedDescription,
+                retryAfter: retryAfter
             )
         }
         return ClaudeSnapshot(
@@ -67,7 +76,8 @@ struct ClaudeSnapshot: Equatable {
             planType: nil,
             lastUpdated: now,
             isStale: false,
-            errorMessage: error.localizedDescription
+            errorMessage: error.localizedDescription,
+            retryAfter: retryAfter
         )
     }
 }
