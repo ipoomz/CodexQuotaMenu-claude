@@ -44,6 +44,18 @@ enum ClaudeUsageParserTests {
             == "\u{00A0}5h73%\u{00A0}W36%")
         precondition(claudeMenuBarTitle(fiveHourRemainingPercent: nil, weeklyRemainingPercent: nil) == " --")
 
+        precondition(ClaudeUsageParser.filteredCookieHeader(from: "sk-ant-sid01-abc") == "sessionKey=sk-ant-sid01-abc")
+        precondition(
+            ClaudeUsageParser.filteredCookieHeader(from: "Cookie: foo=1; sessionKey=sk-ant-x; cf_clearance=zz; _ga=9")
+                == "sessionKey=sk-ant-x; cf_clearance=zz"
+        )
+        precondition(ClaudeUsageParser.filteredCookieHeader(from: "foo=1; _ga=9") == nil)
+        precondition(ClaudeUsageParser.filteredCookieHeader(from: "") == nil)
+
+        let orgs = #"[{"uuid":"api-org","capabilities":["api"]},{"uuid":"chat-org","capabilities":["chat"]}]"#.data(using: .utf8)!
+        precondition(ClaudeUsageParser.parseOrganizationID(orgs) == "chat-org")
+        precondition(ClaudeUsageParser.parseOrganizationID(Data("[]".utf8)) == nil)
+
         print("Claude usage parser tests passed")
     }
 }

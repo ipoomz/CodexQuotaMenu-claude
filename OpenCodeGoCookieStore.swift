@@ -5,6 +5,7 @@ enum OpenCodeGoCookieStore {
     private static let service = "io.github.zhanglaojiu.codexquotamenu"
     static let primaryAccount = "opencode.go.manual"
     static let secondaryAccount = "opencode.go.manual.2"
+    static let claudeAccount = "claude.ai.cookie"
 
     static func loadManualCookie() -> String? {
         load(account: primaryAccount)

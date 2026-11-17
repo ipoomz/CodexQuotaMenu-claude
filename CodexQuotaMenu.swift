@@ -136,7 +136,7 @@ final class QuotaPanelView: NSView {
             drawClaude(at: 0)
             contentBottom = Self.claudeSectionHeight(claude)
             if let claude, claude.hasAnyData {
-                source = "Synced \(syncTimeFormatter.string(from: claude.lastUpdated)) · Claude Code sign-in"
+                source = "Synced \(syncTimeFormatter.string(from: claude.lastUpdated)) · \(claude.source)"
             }
         case .openCodeGo:
             drawOpenCodeGo(at: 0)
@@ -1053,6 +1053,38 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         }
     }
 
+    @objc private func setClaudeCookie() {
+        let alert = NSAlert()
+        alert.messageText = "Set Claude Cookie"
+        alert.informativeText =
+            "Open claude.ai in your browser, then Developer Tools → Application (Storage) → Cookies → " +
+            "claude.ai, and copy the value of sessionKey. Only the needed cookies are saved, in your Keychain."
+        let textField = NSSecureTextField(frame: NSRect(x: 0, y: 0, width: 320, height: 24))
+        textField.placeholderString = "sk-ant-sid..."
+        alert.accessoryView = textField
+        alert.addButton(withTitle: "Save")
+        alert.addButton(withTitle: "Cancel")
+        NSApp.activate(ignoringOtherApps: true)
+        guard alert.runModal() == .alertFirstButtonReturn else {
+            return
+        }
+        guard let filtered = ClaudeUsageParser.filteredCookieHeader(from: textField.stringValue),
+              OpenCodeGoCookieStore.saveManualCookie(filtered, account: OpenCodeGoCookieStore.claudeAccount) else {
+            NSSound.beep()
+            return
+        }
+        claudeFailureCount = 0
+        claudeNextAttempt = .distantPast
+        claudeLastAttempt = .distantPast
+        refreshClaude(force: true)
+    }
+
+    @objc private func clearClaudeCookie() {
+        OpenCodeGoCookieStore.clearManualCookie(account: OpenCodeGoCookieStore.claudeAccount)
+        claudeLastAttempt = .distantPast
+        refreshClaude(force: true)
+    }
+
     @objc private func openOpenCodeGo(_ sender: Any?) {
         let index = accountIndex(from: sender)
         guard openCodeGoAccounts.indices.contains(index) else {
@@ -1210,7 +1242,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         }
         claudeLastAttempt = Date()
         isRefreshingClaude = true
-        claudeReader.read(previous: claudeSnapshot) { [weak self] snapshot in
+        claudeReader.read(
+            cookie: OpenCodeGoCookieStore.loadManualCookie(account: OpenCodeGoCookieStore.claudeAccount),
+            previous: claudeSnapshot
+        ) { [weak self] snapshot in
             DispatchQueue.main.async {
                 guard let self else {
                     return
@@ -1542,6 +1577,20 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
             let openClaudeItem = NSMenuItem(title: "Open Claude", action: #selector(openClaude), keyEquivalent: "c")
             openClaudeItem.target = self
             menu.addItem(openClaudeItem)
+
+            let hasCookie = OpenCodeGoCookieStore.loadManualCookie(account: OpenCodeGoCookieStore.claudeAccount) != nil
+            let cookieItem = NSMenuItem(
+                title: hasCookie ? "Replace Claude Cookie…" : "Set Claude Cookie…",
+                action: #selector(setClaudeCookie),
+                keyEquivalent: ""
+            )
+            cookieItem.target = self
+            menu.addItem(cookieItem)
+            if hasCookie {
+                let clearItem = NSMenuItem(title: "Clear Claude Cookie", action: #selector(clearClaudeCookie), keyEquivalent: "")
+                clearItem.target = self
+                menu.addItem(clearItem)
+            }
         }
 
         for (index, account) in openCodeGoAccounts.enumerated() where selectedMenuBarProvider == .openCodeGo {

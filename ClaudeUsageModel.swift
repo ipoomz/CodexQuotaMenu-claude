@@ -3,6 +3,7 @@ import Foundation
 enum ClaudeUsageError: LocalizedError, Equatable {
     case credentialsMissing
     case unauthorized
+    case cookieInvalid
     case network(String)
     case api(Int)
     case rateLimited(retryAfter: TimeInterval?)
@@ -14,6 +15,8 @@ enum ClaudeUsageError: LocalizedError, Equatable {
             return "Claude Code sign-in was not found. Run `claude` and log in."
         case .unauthorized:
             return "Claude Code session expired. Open Claude Code to refresh it."
+        case .cookieInvalid:
+            return "claude.ai cookie expired. Use Set Claude Cookie to paste a new one."
         case let .network(message):
             return "Claude network error: \(message)"
         case let .api(status):
@@ -45,6 +48,7 @@ struct ClaudeSnapshot: Equatable {
     let isStale: Bool
     let errorMessage: String?
     var retryAfter: TimeInterval? = nil
+    var source: String = "Claude Code sign-in"
 
     var hasAnyData: Bool {
         fiveHour != nil || weekly != nil
@@ -65,7 +69,8 @@ struct ClaudeSnapshot: Equatable {
                 lastUpdated: previous.lastUpdated,
                 isStale: true,
                 errorMessage: error.localizedDescription,
-                retryAfter: retryAfter
+                retryAfter: retryAfter,
+                source: previous.source
             )
         }
         return ClaudeSnapshot(
@@ -106,6 +111,48 @@ enum ClaudeUsageParser {
             isStale: false,
             errorMessage: nil
         )
+    }
+
+    /// Keeps only the cookies needed to talk to claude.ai. Accepts a full
+    /// `Cookie:` header, `name=value` pairs, or a bare `sk-ant-...` session key.
+    static func filteredCookieHeader(from raw: String) -> String? {
+        let allowed: Set<String> = ["sessionkey", "cf_clearance", "__cf_bm", "lastactiveorg"]
+        var text = raw.trimmingCharacters(in: .whitespacesAndNewlines)
+        if text.lowercased().hasPrefix("cookie:") {
+            text = String(text.dropFirst("cookie:".count))
+        }
+        if !text.contains("="), text.hasPrefix("sk-ant-") {
+            return "sessionKey=\(text)"
+        }
+        var pairs: [String] = []
+        for part in text.split(separator: ";") {
+            let piece = part.trimmingCharacters(in: .whitespacesAndNewlines)
+            guard let equals = piece.firstIndex(of: "=") else {
+                continue
+            }
+            let name = String(piece[..<equals])
+            let value = String(piece[piece.index(after: equals)...])
+            guard allowed.contains(name.lowercased()), !value.isEmpty,
+                  !value.contains(where: { $0.isWhitespace || $0 == "\"" }) else {
+                continue
+            }
+            pairs.append("\(name)=\(value)")
+        }
+        guard pairs.contains(where: { $0.lowercased().hasPrefix("sessionkey=") }) else {
+            return nil
+        }
+        return pairs.joined(separator: "; ")
+    }
+
+    /// Picks the organization UUID from `GET https://claude.ai/api/organizations`.
+    static func parseOrganizationID(_ data: Data) -> String? {
+        guard let list = try? JSONSerialization.jsonObject(with: data) as? [[String: Any]] else {
+            return nil
+        }
+        let withChat = list.first {
+            ($0["capabilities"] as? [String])?.contains("chat") == true
+        }
+        return ((withChat ?? list.first)?["uuid"] as? String).flatMap { $0.isEmpty ? nil : $0 }
     }
 
     /// Extracts the OAuth access token and subscription type from the JSON that
